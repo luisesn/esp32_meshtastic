@@ -72,11 +72,11 @@ static void sx1276_irq_handler_task(void *pvParameters) {
 /* ── Display task (priority 1) ──────────────────────────────────────────── */
 
 static void display_task(void *pvParameters) {
-    char line[22];
+    char line[48];   /* larger than worst-case format output; oled_puts clips at OLED_WIDTH */
     ESP_LOGI(TAG, "Display task started");
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));   /* 1 Hz max update rate */
+        vTaskDelay(pdMS_TO_TICKS(1000));
 
         analyzer_stats_t s;
         if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -88,23 +88,43 @@ static void display_task(void *pvParameters) {
 
         oled_clear();
 
-        /* Row 0: static config */
+        /* Row 0: channel / freq / modem config (static) */
         snprintf(line, sizeof(line), "%s 869.6 SF7", MESH_CHANNEL_NAME);
         oled_puts(0, 0, line);
 
-        /* Row 1: noise floor */
-        snprintf(line, sizeof(line), "Noise:%4d dBm", s.last_noise_dbm);
-        oled_puts(0, 2, line);
+        /* Row 1: noise floor + packet counters */
+        snprintf(line, sizeof(line), "Nf:%4d RX:%-4" PRIu32 "TX:%-3" PRIu32,
+                 s.last_noise_dbm, s.rx_count, s.tx_count);
+        oled_puts(0, 1, line);
 
-        /* Row 2: last RX */
-        snprintf(line, sizeof(line), "RX:%4ddBm %+3ddB",
+        /* Rows 2-3: most recent decoded packet */
+        if (s.disp_pkts[0].valid) {
+            snprintf(line, sizeof(line), "!%08" PRIx32 " %4d %+3ddB",
+                     s.disp_pkts[0].src_addr,
+                     s.disp_pkts[0].rssi_dbm,
+                     s.disp_pkts[0].snr_db);
+            oled_puts(0, 2, line);
+            oled_puts(0, 3, s.disp_pkts[0].summary);
+        } else {
+            oled_puts(0, 2, "no pkts yet");
+        }
+
+        /* Rows 4-5: second most recent decoded packet */
+        if (s.disp_pkts[1].valid) {
+            snprintf(line, sizeof(line), "!%08" PRIx32 " %4d %+3ddB",
+                     s.disp_pkts[1].src_addr,
+                     s.disp_pkts[1].rssi_dbm,
+                     s.disp_pkts[1].snr_db);
+            oled_puts(0, 4, line);
+            oled_puts(0, 5, s.disp_pkts[1].summary);
+        }
+
+        /* Row 6: last RX RF quality (updated on every packet, decoded or not) */
+        snprintf(line, sizeof(line), "RF:%4ddBm %+3ddB",
                  s.last_rx_rssi_dbm, s.last_rx_snr_db);
-        oled_puts(0, 4, line);
-
-        /* Row 3: packet counters */
-        snprintf(line, sizeof(line), "RX:%-5" PRIu32 " TX:%-5" PRIu32,
-                 s.rx_count, s.tx_count);
         oled_puts(0, 6, line);
+
+        /* Row 7: (reserved — blank for now) */
 
         oled_flush();
     }

@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "events.h"
 #include "../meshtastic/proto/proto_encode.h"
@@ -141,6 +142,82 @@ static void print_telemetry(const uint8_t *pl, size_t pl_len) {
         printf("    TELEMETRY: %u bytes (no device/env metrics decoded)\n", (unsigned)pl_len);
 }
 
+/* ── Display packet summary builder ─────────────────────────────────────── */
+
+static void build_disp_summary(const rx_packet_t *rx, char *buf, size_t buf_len) {
+    const uint8_t *pl  = rx->raw_payload;
+    size_t         pll = rx->raw_len;
+
+    switch ((meshtastic_PortNum)rx->portnum) {
+    case PORTNUM_TEXT_MESSAGE_APP: {
+        size_t n = pll < 15 ? pll : 15;
+        snprintf(buf, buf_len, "TXT:\"%.*s\"", (int)n, (const char *)pl);
+        break;
+    }
+    case PORTNUM_NODEINFO_APP: {
+        mesh_user_t u;
+        if (proto_decode_user(pl, pll, &u) && u.long_name[0])
+            snprintf(buf, buf_len, "NFO:%.16s", u.long_name);
+        else
+            snprintf(buf, buf_len, "NFO:!%08" PRIx32, rx->src_addr);
+        break;
+    }
+    case PORTNUM_POSITION_APP: {
+        mesh_position_t pos;
+        if (proto_decode_position(pl, pll, &pos) && (pos.latitude_i || pos.longitude_i)) {
+            double lat = pos.latitude_i / 1e7;
+            double lon = pos.longitude_i / 1e7;
+            snprintf(buf, buf_len, "POS:%.4f,%.4f", lat, lon);
+        } else {
+            snprintf(buf, buf_len, "POS:%uB", (unsigned)pll);
+        }
+        break;
+    }
+    case PORTNUM_ROUTING_APP: {
+        mesh_routing_t r;
+        if (proto_decode_routing(pl, pll, &r))
+            snprintf(buf, buf_len, "RTG:%.15s", route_error_name(r.error_reason));
+        else
+            snprintf(buf, buf_len, "RTG:%uB", (unsigned)pll);
+        break;
+    }
+    case PORTNUM_TELEMETRY_APP: {
+        mesh_telemetry_t t;
+        if (proto_decode_telemetry(pl, pll, &t)) {
+            if (t.has_device)
+                snprintf(buf, buf_len, "TEL:%u%% %.2fV", (unsigned)t.battery_level, t.voltage);
+            else if (t.has_env)
+                snprintf(buf, buf_len, "TEL:%.1fC %.0f%%RH", t.temperature, t.relative_humidity);
+            else
+                snprintf(buf, buf_len, "TEL:%uB", (unsigned)pll);
+        } else {
+            snprintf(buf, buf_len, "TEL:%uB", (unsigned)pll);
+        }
+        break;
+    }
+    default:
+        snprintf(buf, buf_len, "%.4s:%uB",
+                 portnum_name((meshtastic_PortNum)rx->portnum), (unsigned)pll);
+        break;
+    }
+}
+
+static void update_disp_pkt(const rx_packet_t *rx) {
+    disp_pkt_t p = {
+        .src_addr = rx->src_addr,
+        .rssi_dbm = rx->rssi_dbm,
+        .snr_db   = rx->snr_db,
+        .valid    = true,
+    };
+    build_disp_summary(rx, p.summary, sizeof(p.summary));
+
+    if (xSemaphoreTake(g_stats_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        g_stats.disp_pkts[1] = g_stats.disp_pkts[0];
+        g_stats.disp_pkts[0] = p;
+        xSemaphoreGive(g_stats_mutex);
+    }
+}
+
 /* ── Event log functions ─────────────────────────────────────────────────── */
 
 static void log_rx_packet(const analyzer_event_t *evt) {
@@ -195,6 +272,8 @@ static void log_rx_packet(const analyzer_event_t *evt) {
     }
 
     printf("------------------------------------------------------------------------\n");
+
+    update_disp_pkt(rx);
 }
 
 static void log_noise_sample(const analyzer_event_t *evt) {

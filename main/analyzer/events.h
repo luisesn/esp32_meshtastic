@@ -44,14 +44,25 @@ typedef struct {
     };
 } analyzer_event_t;
 
+/* ── Per-packet display slot (ring of 2, updated by logger_task) ────────── */
+
+typedef struct {
+    uint32_t src_addr;
+    int16_t  rssi_dbm;
+    int8_t   snr_db;
+    char     summary[22];   /* portnum-specific one-liner, max 21 chars + NUL */
+    bool     valid;
+} disp_pkt_t;
+
 /* ── Shared statistics (display_task reads these periodically) ───────────── */
 
 typedef struct {
-    int16_t  last_noise_dbm;
-    int16_t  last_rx_rssi_dbm;
-    int8_t   last_rx_snr_db;
-    uint32_t rx_count;
-    uint32_t tx_count;
+    int16_t   last_noise_dbm;
+    int16_t   last_rx_rssi_dbm;
+    int8_t    last_rx_snr_db;
+    uint32_t  rx_count;
+    uint32_t  tx_count;
+    disp_pkt_t disp_pkts[2];  /* [0]=most recent, [1]=second most recent */
 } analyzer_stats_t;
 
 /* ── Global handles (defined in main.c) ─────────────────────────────────── */
