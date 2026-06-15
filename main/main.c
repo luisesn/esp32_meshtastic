@@ -89,7 +89,7 @@ static void display_task(void *pvParameters) {
         oled_clear();
 
         /* Row 0: static config */
-        snprintf(line, sizeof(line), "%s 868.0 SF7", MESH_CHANNEL_NAME);
+        snprintf(line, sizeof(line), "%s 869.6 SF7", MESH_CHANNEL_NAME);
         oled_puts(0, 0, line);
 
         /* Row 1: noise floor */

@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "sx1276.h"
 #include "../config.h"
+#include "../meshtastic/channel_freq.h"
 
 static const char *TAG = "sx1276";
 static spi_device_handle_t s_spi = NULL;
@@ -158,11 +159,14 @@ esp_err_t sx1276_init(void) {
     sx1276_write_reg(REG_OP_MODE, 0x80);   /* LoRa sleep */
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    /* Frequency: 868.0 MHz
-     * Frf = 868e6 * 2^19 / 32e6 = 14221312 = 0xD90000 */
-    sx1276_write_reg(REG_FR_MSB, 0xD9);
-    sx1276_write_reg(REG_FR_MID, 0x00);
-    sx1276_write_reg(REG_FR_LSB, 0x00);
+    /* Frequency: derived from Meshtastic channel algorithm (DJB2 hash → slot) */
+    uint32_t freq_hz = mesh_channel_freq_hz(MESH_CHANNEL_NAME, LORA_BW_KHZ,
+                                             LORA_REGION_FREQ_START_HZ,
+                                             LORA_REGION_FREQ_END_HZ);
+    uint32_t frf = (uint32_t)((uint64_t)freq_hz * (1u << 19) / 32000000UL);
+    sx1276_write_reg(REG_FR_MSB, (frf >> 16) & 0xFF);
+    sx1276_write_reg(REG_FR_MID, (frf >>  8) & 0xFF);
+    sx1276_write_reg(REG_FR_LSB,  frf        & 0xFF);
 
     /* ModemConfig1: BW=62.5kHz (0110), CR=4/5 (001), explicit header (0)
      * = 0110_0010 = 0x62 */
@@ -208,7 +212,7 @@ esp_err_t sx1276_init(void) {
     sx1276_set_mode(MODE_STDBY);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    ESP_LOGI(TAG, "SX1276 configured: 868.0 MHz, BW=62.5kHz, SF7, CR=4/5, sync=0x%02X, +20dBm",
-             LORA_SYNC_WORD);
+    ESP_LOGI(TAG, "SX1276 freq: %lu Hz (\"%s\" slot), BW=62.5kHz, SF7, CR=4/5, sync=0x%02X, +20dBm",
+             (unsigned long)freq_hz, MESH_CHANNEL_NAME, LORA_SYNC_WORD);
     return ESP_OK;
 }

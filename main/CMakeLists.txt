@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "sx1276/sx1276.c"
+        "meshtastic/channel_freq.c"
         "meshtastic/crypto.c"
         "meshtastic/packet.c"
         "meshtastic/proto/proto_encode.c"
