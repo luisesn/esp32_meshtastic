@@ -1,2 +1,28 @@
-idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS
+        "main.c"
+        "sx1276/sx1276.c"
+        "meshtastic/crypto.c"
+        "meshtastic/packet.c"
+        "meshtastic/proto/proto_encode.c"
+        "analyzer/rx_task.c"
+        "analyzer/tx_task.c"
+        "analyzer/noise_task.c"
+        "analyzer/logger_task.c"
+        "display/oled.c"
+    INCLUDE_DIRS
+        "."
+        "sx1276"
+        "meshtastic"
+        "meshtastic/proto"
+        "analyzer"
+        "display"
+    REQUIRES
+        esp_driver_gpio
+        esp_driver_spi
+        driver
+        esp_timer
+        mbedtls
+        freertos
+        esp_hw_support
+)
