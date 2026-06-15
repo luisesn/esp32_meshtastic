@@ -1,6 +1,8 @@
 # TLoRA v1 — Meshtastic Signal & Noise Analyzer
 
-Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and prints all events as human-readable blocks over USB serial. It also broadcasts a NodeInfo packet every 60 seconds, making the device visible to nearby Meshtastic nodes.
+Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and streams all events as **NDJSON** (newline-delimited JSON) over USB serial and **Bluetooth Classic SPP** simultaneously. It also broadcasts a NodeInfo packet every 60 seconds.
+
+A self-contained **WebSerial browser UI** (`web/index.html`) can be opened locally or over HTTPS to connect directly to the device and display live packet data with filtering and expandable JSON views.
 
 ## Hardware
 
@@ -57,100 +59,75 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 The serial monitor will show newline-delimited JSON at 115200 baud.
 
-## Serial Output
+## Serial Output (NDJSON)
 
-All events are printed as human-readable blocks on UART0 (USB serial, 115 200 baud).
+All events are emitted as **NDJSON** (one JSON object per line) on UART0 / USB serial at **115 200 baud**. The same stream is mirrored over **Bluetooth Classic SPP** (device name `TLoRA-Analyzer`).
+
+Use any serial terminal or the included `web/index.html` to consume the stream.
 
 ### Decoded RX packet — text message
 
-```
---- RX  00:02:03.456  ----------------------------------------
-    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002a  hops: 3
-    RF:  RSSI -89 dBm  SNR +7 dB
-    ---
-    TEXT_MESSAGE: "Hello from the mesh!"
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":123456,"src":"!8487f01c","dst":"!ffffffff","pkt":3478568197,"hop_limit":3,"hop_start":3,"want_ack":false,"relay_node":0,"rssi":-74,"snr":9,"decoded":true,"portnum":1,"portnum_name":"TEXT_MESSAGE_APP","payload":{"text":"Hello from the mesh!"}}
 ```
 
 ### Decoded RX packet — NodeInfo
 
-```
---- RX  00:02:04.100  ----------------------------------------
-    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002b  hops: 2
-    RF:  RSSI -94 dBm  SNR +3 dB
-    ---
-    NODEINFO: "TLoRA-beef" (!deadbeef)  short: "TLR"
-              hw: TLORA_V1        MAC: AA:BB:CC:DD:EE:FF
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":124000,"src":"!deadbeef","dst":"!ffffffff","pkt":42,"hop_limit":3,"hop_start":3,"want_ack":false,"relay_node":0,"rssi":-94,"snr":3,"decoded":true,"portnum":4,"portnum_name":"NODEINFO_APP","payload":{"id":"!deadbeef","long_name":"TLoRA-beef","short_name":"TLR","hw_model":37,"hw_model_name":"TLORA_V1","macaddr":"aa:bb:cc:dd:ee:ff","licensed":false}}
 ```
 
 ### Decoded RX packet — Position
 
-```
---- RX  00:02:05.200  ----------------------------------------
-    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002c  hops: 3
-    RF:  RSSI -89 dBm  SNR +6 dB
-    ---
-    POSITION: 37.4219983 N  122.0839998 W  alt: 15 m
-              GPS: 2024-06-15 10:30:45 UTC
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":125000,"src":"!deadbeef","dst":"!ffffffff","pkt":43,"hop_limit":3,"hop_start":3,"want_ack":false,"relay_node":0,"rssi":-89,"snr":6,"decoded":true,"portnum":3,"portnum_name":"POSITION_APP","payload":{"lat":37.4219983,"lon":-122.0839998,"alt":15,"gps_time":1718444245}}
 ```
 
 ### Decoded RX packet — Telemetry
 
-```
---- RX  00:02:06.300  ----------------------------------------
-    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002d  hops: 2
-    RF:  RSSI -91 dBm  SNR +5 dB
-    ---
-    TELEMETRY (device): batt 85%  3.92 V  ch-util 3.2%  air-tx 1.1%
-    TELEMETRY (env):    temp 22.5 C  humidity 65.0%  pressure 1013.2 hPa
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":126000,"src":"!deadbeef","dst":"!ffffffff","pkt":44,"hop_limit":3,"hop_start":3,"want_ack":false,"relay_node":0,"rssi":-91,"snr":5,"decoded":true,"portnum":67,"portnum_name":"TELEMETRY_APP","payload":{"battery_level":85,"voltage":3.92,"channel_utilization":3.2,"air_util_tx":1.1,"temperature":22.5,"relative_humidity":65.0,"barometric_pressure":1013.2}}
 ```
 
-### Decoded RX packet — Routing (ACK / error)
+### Decoded RX packet — relayed (relay_node ≠ 0)
 
-```
---- RX  00:02:07.000  ----------------------------------------
-    src: !deadbeef    dst: !cafebabe    pkt: 0x0000002e  hops: 1  [ACK]
-    RF:  RSSI -88 dBm  SNR +9 dB
-    ---
-    ROUTING: error=NONE (ACK)
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":128700,"src":"!8487f01c","dst":"!ffffffff","pkt":3478568197,"hop_limit":6,"hop_start":7,"want_ack":false,"relay_node":28,"rssi":-88,"snr":6,"decoded":true,"portnum":1,"portnum_name":"TEXT_MESSAGE_APP","payload":{"text":"hello mesh"}}
 ```
 
-### Decoded RX packet — relayed (hop_start > hop_limit)
-
-```
---- RX  00:02:08.700  ----------------------------------------
-    src: !8487f01c     dst: BROADCAST     pkt: 0xcf56bd05  hops: 6/7  via !xx1c
-    RF:  RSSI -88 dBm  SNR +6 dB
-    ---
-    TEXT_MESSAGE_APP: "hello mesh"
-------------------------------------------------------------------------
-```
-
-`hops: 6/7` means the packet started with hop_limit=7 and has been relayed once. `via !xx1c` shows the low byte of the last relay node's address.
+`hop_start:7, hop_limit:6` means the packet started with hop_limit=7 and has been relayed once. `relay_node:28` is the low byte of the last relaying node's address.
 
 ### Undecoded RX packet (foreign channel)
 
-```
---- RX  00:00:12.500  [FOREIGN CHANNEL]  ----------------------------------
-    RF: RSSI -103 dBm  SNR -2 dB   raw: 27 bytes
-------------------------------------------------------------------------
+```json
+{"type":"rx","ts":12500,"decoded":false,"rssi":-103,"snr":-2,"raw_len":27}
 ```
 
 ### Noise floor sample (every 5 s)
 
-```
---- noise  00:00:05.000   floor: -121 dBm  (32 samples)
+```json
+{"type":"noise","ts":5000,"floor_dbm":-121,"samples":32}
 ```
 
 ### TX done
 
+```json
+{"type":"tx_done","ts":60000}
 ```
---- TX done  00:01:00.000
-```
+
+## WebSerial Browser UI
+
+Open `web/index.html` directly in Chrome or Edge (≥ 89) or serve it over HTTPS.  No installation or build step is required — all logic is self-contained in the single HTML file.
+
+1. Open `web/index.html` in Chrome/Edge
+2. Click **Connect** and select the TLoRA serial port (115200 baud)
+3. Packets appear in real time; click any row to expand the full JSON
+
+Features: live stats bar, type filter buttons (RX / Foreign / Noise / TX), auto-scroll, Clear button, 500-row rolling window.
+
+## Bluetooth SPP
+
+The device appears as `TLoRA-Analyzer` over Bluetooth Classic. Any SPP-capable app (e.g. Serial Bluetooth Terminal on Android) can connect and receive the same NDJSON stream as the USB serial port.
 
 ## Radio Configuration
 
@@ -219,7 +196,7 @@ main/
 ├── config.h                  all compile-time constants
 ├── main.c                    app_main, task creation, IRQ handler task
 ├── sx1276/
-│   ├── sx1276.h/.c           SPI driver — register R/W, FIFO, signal quality
+│   └── sx1276.h/.c           SPI driver — register R/W, FIFO, signal quality
 ├── meshtastic/
 │   ├── crypto.h/.c           AES-128-CTR, PSK expansion, channel hash
 │   ├── packet.h/.c           OTA packet encode/decode
@@ -231,9 +208,13 @@ main/
 │   ├── rx_task.c             DIO0 → FIFO read → decode → event queue
 │   ├── tx_task.c             60 s NodeInfo broadcast
 │   ├── noise_task.c          32-sample noise floor averaging
-│   └── logger_task.c         human-readable packet log to UART
-└── display/
-    └── oled.h/.c             SSD1306 minimal I2C driver + 5×7 font
+│   └── logger_task.c         NDJSON serialiser → UART + Bluetooth SPP
+├── display/
+│   └── oled.h/.c             SSD1306 minimal I2C driver + 5×7 font
+└── bt/
+    └── bt_spp.h/.c           Bluetooth Classic SPP (Bluedroid, CB mode)
+web/
+└── index.html                self-contained WebSerial browser UI
 ```
 
 ## Task Architecture
@@ -244,7 +225,7 @@ main/
 | `lora_rx` | 4096 | 4 | Reads FIFO, decrypts, decodes, posts event |
 | `lora_tx` | 4096 | 3 | 60 s NodeInfo TX |
 | `noise` | 2048 | 2 | 5 s noise floor sampling |
-| `logger` | 4096 | 1 | Human-readable packet log to UART |
+| `logger` | 4096 | 1 | NDJSON serialiser to UART and Bluetooth SPP |
 | `display` | 2048 | 1 | 1 Hz OLED update |
 
 ## Cryptography Notes

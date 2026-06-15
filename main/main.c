@@ -16,6 +16,7 @@
 #include "meshtastic/packet.h"
 #include "analyzer/events.h"
 #include "display/oled.h"
+#include "bt/bt_spp.h"
 
 static const char *TAG = "main";
 
@@ -153,6 +154,10 @@ void app_main(void) {
     /* OLED display init (non-fatal if not present) */
     if (oled_init() != ESP_OK)
         ESP_LOGW(TAG, "OLED init failed — display disabled");
+
+    /* Bluetooth Classic SPP (non-fatal) */
+    if (bt_spp_init("TLoRA-Analyzer") != ESP_OK)
+        ESP_LOGW(TAG, "BT SPP init failed — Bluetooth disabled");
 
     /* FreeRTOS primitives */
     g_event_queue    = xQueueCreate(16, sizeof(analyzer_event_t));

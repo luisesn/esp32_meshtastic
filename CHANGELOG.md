@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Phase 12] — NDJSON Serial Output + WebSerial UI + Bluetooth SPP — 2026-06-15
+
+### Added
+
+- **NDJSON serial output** — `logger_task.c` now emits one JSON object per line on UART (115 200 baud).
+  Every field that was visible in the old human-readable output is preserved:
+  - `{"type":"rx","ts":...,"src":"!xxxxxxxx","dst":"!xxxxxxxx","pkt":...,"hop_limit":...,"hop_start":...,"want_ack":...,"relay_node":...,"rssi":...,"snr":...,"decoded":true,"portnum":...,"portnum_name":"...","payload":{...}}`
+  - `{"type":"rx","ts":...,"decoded":false,"rssi":...,"snr":...,"raw_len":...}` (foreign channel)
+  - `{"type":"noise","ts":...,"floor_dbm":...,"samples":...}`
+  - `{"type":"tx_done","ts":...}`
+  - Per-portnum `payload` objects: `TEXT_MESSAGE_APP`→`{"text":"..."}`, `NODEINFO_APP`→id/long_name/short_name/hw_model/macaddr/licensed, `POSITION_APP`→lat/lon/alt/gps_time, `ROUTING_APP`→error_code/error_name, `TELEMETRY_APP`→battery/voltage/channel_utilization/air_util_tx and/or temp/humidity/pressure, unknown→`{"hex":"...","len":N}`
+  - Text and string fields are JSON-escaped (`json_esc()` handles `"`, `\`, control characters)
+
+- **WebSerial browser UI** — `web/index.html` (self-contained, no external dependencies):
+  - Works locally or over HTTPS; requires Chrome/Edge ≥ 89
+  - Connect/disconnect via WebSerial (115 200 baud)
+  - Live stats bar: RX count, foreign count, noise samples, TX count, noise floor, last RSSI/SNR
+  - Filter buttons: All / RX / Foreign / Noise / TX
+  - Packet log with timestamp, type badge, and one-line summary per packet
+  - Click any row to expand the pretty-printed raw JSON
+  - Auto-scroll toggle; Clear button; capped at 500 rows to prevent memory growth
+
+- **Bluetooth Classic SPP** — `main/bt/bt_spp.h` / `main/bt/bt_spp.c`:
+  - Device name: `TLoRA-Analyzer` (connectable and generally discoverable)
+  - Uses Bluedroid / `ESP_SPP_MODE_CB`; releases BLE RAM via `esp_bt_controller_mem_release()`
+  - `bt_spp_write(data, len)` called by `output_line()` alongside `printf()` — every JSON record sent on both UART and the BT SPP channel simultaneously
+  - Congestion-aware: writes are skipped if client signals congestion; no-op when no client connected
+  - Non-fatal: if BT init fails at boot, UART output continues unaffected
+  - Guarded by `CONFIG_BT_ENABLED`; stubs in header so BT can be disabled without changing callers
+  - `sdkconfig.defaults` additions: `CONFIG_BT_ENABLED`, `CONFIG_BT_BLUEDROID_ENABLED`, `CONFIG_BT_CLASSIC_ENABLED`, `CONFIG_BT_SPP_ENABLED`
+  - `CMakeLists.txt`: added `bt/bt_spp.c` to SRCS, `bt` to REQUIRES, `bt` dir to INCLUDE_DIRS
+
+### Changed
+- `logger_task.c` rewritten: replaced human-readable sectioned output with NDJSON
+  - OLED display helpers (`build_disp_summary`, `update_disp_pkt`) retained unchanged
+  - `output_line()` replaces all direct `printf` calls; routes to both UART and BT SPP
+
+---
+
 ## [Phase 11] — Meshtastic 2.5+ Compatibility + AES Nonce Fix — 2026-06-15
 
 ### Fixed

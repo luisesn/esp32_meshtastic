@@ -11,6 +11,7 @@ idf_component_register(
         "analyzer/noise_task.c"
         "analyzer/logger_task.c"
         "display/oled.c"
+        "bt/bt_spp.c"
     INCLUDE_DIRS
         "."
         "sx1276"
@@ -18,6 +19,7 @@ idf_component_register(
         "meshtastic/proto"
         "analyzer"
         "display"
+        "bt"
     REQUIRES
         esp_driver_gpio
         esp_driver_spi
@@ -26,4 +28,5 @@ idf_component_register(
         mbedtls
         freertos
         esp_hw_support
+        bt
 )
