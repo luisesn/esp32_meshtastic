@@ -37,3 +37,34 @@ bool proto_decode_data(const uint8_t *buf, size_t len, mesh_data_t *out);
 
 /* Decode a User message from buf, return true on success */
 bool proto_decode_user(const uint8_t *buf, size_t len, mesh_user_t *out);
+
+/* Position message (sfixed32 lat/lon, int32 alt, uint32 GPS time) */
+typedef struct {
+    int32_t  latitude_i;    /* sfixed32 field 1, degrees × 1e7 */
+    int32_t  longitude_i;   /* sfixed32 field 2, degrees × 1e7 */
+    int32_t  altitude;      /* int32   field 3, metres HAE */
+    uint32_t time;          /* uint32  field 9, Unix timestamp from GPS */
+} mesh_position_t;
+
+/* Routing message — carries either a route or an error code */
+typedef struct {
+    uint32_t error_reason;  /* RouteError enum field 3, 0 = none/ACK */
+} mesh_routing_t;
+
+/* Telemetry message — DeviceMetrics and/or EnvironmentMetrics sub-messages */
+typedef struct {
+    uint32_t time;               /* uint32 field 1, Unix timestamp */
+    bool     has_device;
+    uint32_t battery_level;      /* 0–100 % */
+    float    voltage;            /* V */
+    float    channel_utilization;/* % */
+    float    air_util_tx;        /* % */
+    bool     has_env;
+    float    temperature;        /* °C */
+    float    relative_humidity;  /* % */
+    float    barometric_pressure;/* hPa */
+} mesh_telemetry_t;
+
+bool proto_decode_position(const uint8_t *buf, size_t len, mesh_position_t *out);
+bool proto_decode_routing(const uint8_t *buf, size_t len, mesh_routing_t *out);
+bool proto_decode_telemetry(const uint8_t *buf, size_t len, mesh_telemetry_t *out);

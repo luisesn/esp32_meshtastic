@@ -6,6 +6,7 @@
 /* Wire types */
 #define WT_VARINT  0
 #define WT_LEN     2
+#define WT_FIX32   5
 
 static size_t write_varint(uint8_t *buf, size_t pos, size_t buf_size, uint64_t val) {
     do {
@@ -57,6 +58,15 @@ static size_t write_bool(uint8_t *buf, size_t pos, size_t buf_size,
 }
 
 /* ── Varint / length-delimited decode helpers ───────────────────────────── */
+
+static size_t read_fixed32(const uint8_t *buf, size_t pos, size_t len, uint32_t *out) {
+    if (pos + 4 > len) return 0;
+    *out = (uint32_t)buf[pos]
+         | ((uint32_t)buf[pos+1] <<  8)
+         | ((uint32_t)buf[pos+2] << 16)
+         | ((uint32_t)buf[pos+3] << 24);
+    return pos + 4;
+}
 
 static size_t read_varint(const uint8_t *buf, size_t pos, size_t len, uint64_t *out) {
     *out = 0;
@@ -195,4 +205,170 @@ const char *portnum_name(meshtastic_PortNum p) {
         case PORTNUM_TELEMETRY_APP:    return "TELEMETRY_APP";
         default:                       return "UNKNOWN_APP";
     }
+}
+
+/* ── New portnum decoders ────────────────────────────────────────────────── */
+
+bool proto_decode_position(const uint8_t *buf, size_t len, mesh_position_t *out) {
+    memset(out, 0, sizeof(*out));
+    size_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_val;
+        pos = read_varint(buf, pos, len, &tag_val);
+        if (!pos) return false;
+        uint32_t fn = (uint32_t)(tag_val >> 3);
+        uint8_t  wt = (uint8_t)(tag_val & 0x07);
+
+        if (wt == WT_VARINT) {
+            uint64_t val;
+            pos = read_varint(buf, pos, len, &val);
+            if (!pos) return false;
+            if (fn == 3) out->altitude = (int32_t)(uint32_t)val;
+            if (fn == 9) out->time     = (uint32_t)val;
+        } else if (wt == WT_FIX32) {
+            uint32_t val;
+            pos = read_fixed32(buf, pos, len, &val);
+            if (!pos) return false;
+            if (fn == 1) out->latitude_i  = (int32_t)val;
+            if (fn == 2) out->longitude_i = (int32_t)val;
+        } else if (wt == WT_LEN) {
+            uint64_t dlen;
+            pos = read_varint(buf, pos, len, &dlen);
+            if (!pos || pos + dlen > len) return false;
+            pos += (size_t)dlen;
+        } else if (wt == 1) {
+            if (pos + 8 > len) return false;
+            pos += 8;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool proto_decode_routing(const uint8_t *buf, size_t len, mesh_routing_t *out) {
+    memset(out, 0, sizeof(*out));
+    size_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_val;
+        pos = read_varint(buf, pos, len, &tag_val);
+        if (!pos) return false;
+        uint32_t fn = (uint32_t)(tag_val >> 3);
+        uint8_t  wt = (uint8_t)(tag_val & 0x07);
+
+        if (wt == WT_VARINT) {
+            uint64_t val;
+            pos = read_varint(buf, pos, len, &val);
+            if (!pos) return false;
+            if (fn == 3) out->error_reason = (uint32_t)val;
+        } else if (wt == WT_LEN) {
+            uint64_t dlen;
+            pos = read_varint(buf, pos, len, &dlen);
+            if (!pos || pos + dlen > len) return false;
+            pos += (size_t)dlen;
+        } else if (wt == WT_FIX32) {
+            if (pos + 4 > len) return false;
+            pos += 4;
+        } else if (wt == 1) {
+            if (pos + 8 > len) return false;
+            pos += 8;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void decode_device_metrics(const uint8_t *sub, size_t sub_len, mesh_telemetry_t *out) {
+    size_t pos = 0;
+    while (pos < sub_len) {
+        uint64_t tag_val;
+        pos = read_varint(sub, pos, sub_len, &tag_val);
+        if (!pos) return;
+        uint32_t fn = (uint32_t)(tag_val >> 3);
+        uint8_t  wt = (uint8_t)(tag_val & 0x07);
+        if (wt == WT_VARINT) {
+            uint64_t val;
+            pos = read_varint(sub, pos, sub_len, &val);
+            if (!pos) return;
+            if (fn == 1) out->battery_level = (uint32_t)val;
+        } else if (wt == WT_FIX32) {
+            uint32_t raw;
+            pos = read_fixed32(sub, pos, sub_len, &raw);
+            if (!pos) return;
+            float f; memcpy(&f, &raw, 4);
+            if (fn == 2) out->voltage = f;
+            if (fn == 3) out->channel_utilization = f;
+            if (fn == 4) out->air_util_tx = f;
+        } else if (wt == WT_LEN) {
+            uint64_t dlen;
+            pos = read_varint(sub, pos, sub_len, &dlen);
+            if (!pos || pos + dlen > sub_len) return;
+            pos += (size_t)dlen;
+        } else { return; }
+    }
+}
+
+static void decode_env_metrics(const uint8_t *sub, size_t sub_len, mesh_telemetry_t *out) {
+    size_t pos = 0;
+    while (pos < sub_len) {
+        uint64_t tag_val;
+        pos = read_varint(sub, pos, sub_len, &tag_val);
+        if (!pos) return;
+        uint32_t fn = (uint32_t)(tag_val >> 3);
+        uint8_t  wt = (uint8_t)(tag_val & 0x07);
+        if (wt == WT_FIX32) {
+            uint32_t raw;
+            pos = read_fixed32(sub, pos, sub_len, &raw);
+            if (!pos) return;
+            float f; memcpy(&f, &raw, 4);
+            if (fn == 1) out->temperature = f;
+            if (fn == 2) out->relative_humidity = f;
+            if (fn == 3) out->barometric_pressure = f;
+        } else if (wt == WT_VARINT) {
+            uint64_t val;
+            pos = read_varint(sub, pos, sub_len, &val);
+            if (!pos) return;
+        } else if (wt == WT_LEN) {
+            uint64_t dlen;
+            pos = read_varint(sub, pos, sub_len, &dlen);
+            if (!pos || pos + dlen > sub_len) return;
+            pos += (size_t)dlen;
+        } else { return; }
+    }
+}
+
+bool proto_decode_telemetry(const uint8_t *buf, size_t len, mesh_telemetry_t *out) {
+    memset(out, 0, sizeof(*out));
+    size_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_val;
+        pos = read_varint(buf, pos, len, &tag_val);
+        if (!pos) return false;
+        uint32_t fn = (uint32_t)(tag_val >> 3);
+        uint8_t  wt = (uint8_t)(tag_val & 0x07);
+
+        if (wt == WT_VARINT) {
+            uint64_t val;
+            pos = read_varint(buf, pos, len, &val);
+            if (!pos) return false;
+            if (fn == 1) out->time = (uint32_t)val;
+        } else if (wt == WT_LEN) {
+            uint64_t dlen;
+            pos = read_varint(buf, pos, len, &dlen);
+            if (!pos || pos + dlen > len) return false;
+            if (fn == 2) { out->has_device = true; decode_device_metrics(buf + pos, (size_t)dlen, out); }
+            if (fn == 3) { out->has_env    = true; decode_env_metrics(buf + pos, (size_t)dlen, out); }
+            pos += (size_t)dlen;
+        } else if (wt == WT_FIX32) {
+            if (pos + 4 > len) return false;
+            pos += 4;
+        } else if (wt == 1) {
+            if (pos + 8 > len) return false;
+            pos += 8;
+        } else {
+            return false;
+        }
+    }
+    return true;
 }

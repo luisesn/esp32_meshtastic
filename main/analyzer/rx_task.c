@@ -65,27 +65,23 @@ void lora_rx_task(void *pvParameters) {
             mesh_data_t data;
             if (proto_decode_data(pkt.payload, pkt.payload_len, &data)) {
                 evt.rx.portnum = (uint8_t)data.portnum;
-
-                if (data.portnum == PORTNUM_NODEINFO_APP) {
-                    mesh_user_t user;
-                    if (proto_decode_user(data.payload, data.payload_len, &user))
-                        snprintf(evt.rx.payload_summary, sizeof(evt.rx.payload_summary),
-                                 "NodeInfo: id=%.15s %.39s", user.id, user.long_name);
-                    else
-                        snprintf(evt.rx.payload_summary, sizeof(evt.rx.payload_summary),
-                                 "NodeInfo: id=!%08" PRIx32, pkt.src_addr);
-                } else {
-                    snprintf(evt.rx.payload_summary, sizeof(evt.rx.payload_summary),
-                             "%s len=%u", portnum_name(data.portnum), data.payload_len);
-                }
+                /* Store inner payload so logger_task can decode per portnum */
+                size_t copy = data.payload_len < sizeof(evt.rx.raw_payload)
+                                ? data.payload_len : sizeof(evt.rx.raw_payload);
+                memcpy(evt.rx.raw_payload, data.payload, copy);
+                evt.rx.raw_len = (uint8_t)copy;
             } else {
-                snprintf(evt.rx.payload_summary, sizeof(evt.rx.payload_summary),
-                         "raw proto len=%u", pkt.payload_len);
+                evt.rx.portnum = PORTNUM_UNKNOWN_APP;
+                size_t copy = pkt.payload_len < sizeof(evt.rx.raw_payload)
+                                ? pkt.payload_len : sizeof(evt.rx.raw_payload);
+                memcpy(evt.rx.raw_payload, pkt.payload, copy);
+                evt.rx.raw_len = (uint8_t)copy;
             }
         } else {
             /* Foreign channel or unrecognised packet */
-            memcpy(evt.rx.raw_payload, raw, nb_bytes < sizeof(evt.rx.raw_payload)
-                                             ? nb_bytes : sizeof(evt.rx.raw_payload));
+            size_t copy = nb_bytes < sizeof(evt.rx.raw_payload)
+                            ? nb_bytes : sizeof(evt.rx.raw_payload);
+            memcpy(evt.rx.raw_payload, raw, copy);
         }
 
         /* Update shared stats */

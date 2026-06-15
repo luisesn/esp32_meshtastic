@@ -1,6 +1,6 @@
 # TLoRA v1 — Meshtastic Signal & Noise Analyzer
 
-Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and reports all events as structured JSON over USB serial. It also broadcasts a NodeInfo packet every 60 seconds, making the device visible to nearby Meshtastic nodes.
+Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and prints all events as human-readable blocks over USB serial. It also broadcasts a NodeInfo packet every 60 seconds, making the device visible to nearby Meshtastic nodes.
 
 ## Hardware
 
@@ -57,50 +57,86 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 The serial monitor will show newline-delimited JSON at 115200 baud.
 
-## JSON Output
+## Serial Output
 
-All events are printed as newline-delimited JSON on UART0 (USB serial).
+All events are printed as human-readable blocks on UART0 (USB serial, 115 200 baud).
 
-### Decoded RX packet (own channel)
+### Decoded RX packet — text message
 
-```json
-{
-  "event": "rx_packet",
-  "ts_ms": 123456,
-  "rssi_dbm": -89,
-  "snr_db": 7,
-  "src_addr": "0xDEADBEEF",
-  "dst_addr": "0xFFFFFFFF",
-  "packet_id": 42,
-  "portnum": "NODEINFO_APP",
-  "decoded": true,
-  "payload_summary": "NodeInfo: id=!deadbeef name=TLoRA-beef"
-}
+```
+--- RX  00:02:03.456  ----------------------------------------
+    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002a  hops: 3
+    RF:  RSSI -89 dBm  SNR +7 dB
+    ---
+    TEXT_MESSAGE: "Hello from the mesh!"
+------------------------------------------------------------------------
 ```
 
-### Undecoded RX packet (foreign channel or unknown format)
+### Decoded RX packet — NodeInfo
 
-```json
-{
-  "event": "rx_packet",
-  "ts_ms": 123457,
-  "rssi_dbm": -102,
-  "snr_db": 3,
-  "src_addr": "unknown",
-  "decoded": false,
-  "raw_len": 27
-}
+```
+--- RX  00:02:04.100  ----------------------------------------
+    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002b  hops: 2
+    RF:  RSSI -94 dBm  SNR +3 dB
+    ---
+    NODEINFO: "TLoRA-beef" (!deadbeef)  short: "TLR"
+              hw: TLORA_V1        MAC: AA:BB:CC:DD:EE:FF
+------------------------------------------------------------------------
 ```
 
-### Noise floor sample
+### Decoded RX packet — Position
 
-```json
-{
-  "event": "noise_sample",
-  "ts_ms": 125000,
-  "noise_floor_dbm": -121,
-  "sample_count": 32
-}
+```
+--- RX  00:02:05.200  ----------------------------------------
+    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002c  hops: 3
+    RF:  RSSI -89 dBm  SNR +6 dB
+    ---
+    POSITION: 37.4219983 N  122.0839998 W  alt: 15 m
+              GPS: 2024-06-15 10:30:45 UTC
+------------------------------------------------------------------------
+```
+
+### Decoded RX packet — Telemetry
+
+```
+--- RX  00:02:06.300  ----------------------------------------
+    src: !deadbeef    dst: BROADCAST    pkt: 0x0000002d  hops: 2
+    RF:  RSSI -91 dBm  SNR +5 dB
+    ---
+    TELEMETRY (device): batt 85%  3.92 V  ch-util 3.2%  air-tx 1.1%
+    TELEMETRY (env):    temp 22.5 C  humidity 65.0%  pressure 1013.2 hPa
+------------------------------------------------------------------------
+```
+
+### Decoded RX packet — Routing (ACK / error)
+
+```
+--- RX  00:02:07.000  ----------------------------------------
+    src: !deadbeef    dst: !cafebabe    pkt: 0x0000002e  hops: 1  [ACK]
+    RF:  RSSI -88 dBm  SNR +9 dB
+    ---
+    ROUTING: error=NONE (ACK)
+------------------------------------------------------------------------
+```
+
+### Undecoded RX packet (foreign channel)
+
+```
+--- RX  00:00:12.500  [FOREIGN CHANNEL]  ----------------------------------
+    RF: RSSI -103 dBm  SNR -2 dB   raw: 27 bytes
+------------------------------------------------------------------------
+```
+
+### Noise floor sample (every 5 s)
+
+```
+--- noise  00:00:05.000   floor: -121 dBm  (32 samples)
+```
+
+### TX done
+
+```
+--- TX done  00:01:00.000
 ```
 
 ## Radio Configuration
@@ -109,13 +145,30 @@ Fixed — do not change at runtime. All values are in `main/config.h`.
 
 | Parameter | Value |
 |---|---|
-| Frequency | 868.0 MHz |
+| Frequency | **869.619 MHz** (derived — see below) |
 | Bandwidth | 62.5 kHz |
 | Spreading Factor | SF7 |
 | Coding Rate | 4/5 |
 | Sync Word | `0x2B` |
 | Preamble | 16 symbols |
 | TX Power | +20 dBm (PA_BOOST) |
+
+### Channel frequency derivation
+
+The TX/RX frequency is not hardcoded. At boot, `sx1276_init()` calls `mesh_channel_freq_hz()` which replicates the Meshtastic firmware algorithm:
+
+```
+numSlots   = floor((freqEnd − freqStart) / bw)
+           = floor((869.65 − 869.40) / 0.0625) = 4
+
+slot       = djb2(MESH_CHANNEL_NAME) % numSlots
+           = djb2("SFNarrow") % 4 = 3
+
+freq       = freqStart + bw/2 + slot × bw
+           = 869.400 + 0.03125 + 3 × 0.0625 = 869.61875 MHz
+```
+
+Changing `MESH_CHANNEL_NAME` in `config.h` automatically recomputes the correct frequency at next build.
 
 ## Meshtastic Channel
 
@@ -126,9 +179,10 @@ Set in `main/config.h`:
 #define MESH_PSK_INDEX     1           // 1 = AQ== default PSK
 ```
 
-The AES-128-CTR key and channel hash are **derived at runtime** by `crypto_init()` from these two values — never stored as constants. Changing `MESH_CHANNEL_NAME` or `MESH_PSK_INDEX` is sufficient to switch to a different channel.
+The frequency, AES-128-CTR key, and channel hash are all **derived at runtime** from these two values — never stored as constants. Changing `MESH_CHANNEL_NAME` or `MESH_PSK_INDEX` is sufficient to switch to a different channel.
 
 **Verified values for `MESH_CHANNEL_NAME="SFNarrow"` and `MESH_PSK_INDEX=1`:**
+- Frequency: 869 618 750 Hz
 - AES key: `d4f1bb3a20290759f0bcffabcf4e6901`
 - Channel hash: `0x20`
 
@@ -136,7 +190,7 @@ The AES-128-CTR key and channel hash are **derived at runtime** by `crypto_init(
 
 ```
 ┌────────────────────────┐
-│ SFNarrow 868.0 SF7     │  ← static config
+│ SFNarrow 869.6 SF7     │  ← static config (freq from channel derivation)
 │ Noise: -121 dBm        │  ← latest noise floor
 │ RX: -89dBm  +7dB       │  ← RSSI / SNR of last packet
 │ RX:14    TX:3          │  ← running packet counters

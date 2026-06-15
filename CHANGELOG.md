@@ -6,6 +6,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Phase 10] — Human-Readable Serial Output + Full Portnum Parsing — 2026-06-15
+
+### Added
+- `proto_decode_position()` in `proto_encode.c`: decodes `Position` protobuf
+  - `sfixed32` wire-type (fixed32) for `latitude_i` / `longitude_i` — requires new `read_fixed32()` helper
+  - `altitude` (int32 varint, metres HAE), `time` (uint32 varint, Unix timestamp from GPS)
+- `proto_decode_routing()`: decodes `Routing` protobuf
+  - Extracts `error_reason` (field 3, RouteError enum) — covers ACK, NO_ROUTE, TIMEOUT, etc.
+- `proto_decode_telemetry()`: decodes `Telemetry` protobuf
+  - Parses `DeviceMetrics` sub-message (field 2): battery %, voltage, ch-util %, air-tx %
+  - Parses `EnvironmentMetrics` sub-message (field 3): temperature, humidity, barometric pressure
+  - Both sub-messages use `float` = fixed32 wire type
+- `mesh_position_t`, `mesh_routing_t`, `mesh_telemetry_t` structs in `proto_encode.h`
+- `WT_FIX32` wire-type constant and `read_fixed32()` decode helper in `proto_encode.c`
+
+### Changed
+- `logger_task.c` rewritten: replaced newline-delimited JSON with human-readable sectioned output
+  - Each RX packet printed as a labelled block with a header line (src/dst/pkt/hops), RF line, and portnum-specific body
+  - `TEXT_MESSAGE_APP`: prints raw UTF-8 payload as a quoted string
+  - `POSITION_APP`: prints decimal degrees with N/S/E/W, altitude, and GPS UTC date-time via `gmtime_r()`
+  - `NODEINFO_APP`: prints long name, node ID, short name, hardware model name, and MAC address
+  - `ROUTING_APP`: prints named error reason string
+  - `TELEMETRY_APP`: prints device metrics and/or environment metrics depending on which sub-messages are present
+  - Foreign channel (undecoded) packets printed with `[FOREIGN CHANNEL]` label and raw byte count
+  - Noise and TX-done events condensed to single-line format
+- `rx_task.c`: inner portnum payload bytes now passed through the event via `raw_payload`/`raw_len` (decoded=true)
+  — all per-portnum decode logic moved to `logger_task`; summary string no longer built in `rx_task`
+
+---
+
+## [Phase 9] — Meshtastic Channel Frequency Derivation — 2026-06-15
+
+### Added
+- `main/meshtastic/channel_freq.c` / `channel_freq.h`: `mesh_channel_freq_hz()`
+  - Implements the Meshtastic firmware frequency-slot algorithm: DJB2 hash of channel name → channel slot → centre frequency
+  - Formula: `freq = freqStart + bw/2 + (djb2(name) % numSlots) × bw`
+  - For `SFNarrow` + EU_868 (869.4–869.65 MHz, BW=62.5 kHz): 4 slots, slot 3 → **869 618 750 Hz**
+- `LORA_REGION_FREQ_START_HZ` / `LORA_REGION_FREQ_END_HZ` in `config.h` (EU_868 band limits)
+
+### Changed
+- `sx1276_init()`: frequency registers (`REG_FR_MSB/MID/LSB`) now computed at runtime from `mesh_channel_freq_hz()` instead of hardcoded `0xD90000` (868.0 MHz)
+  - Frf formula: `(uint64_t)freq_hz × 2¹⁹ / 32 000 000`
+  - Boot log now prints the derived frequency and channel name
+- `LORA_FREQ_HZ` in `config.h` updated to `869618750UL` (reference value; actual register is always computed)
+- OLED config line updated from `868.0` to `869.6` in `main.c`
+
+---
+
 ## [Phase 8] — Display Layer — 2026-06-15
 
 ### Added
@@ -120,7 +168,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - Full PHY register configuration in `sx1276_init()`:
-  - Frequency: `RegFr = 0xD90000` → 868.0 MHz
+  - Frequency: `RegFr = 0xD90000` → 868.0 MHz (later replaced by runtime derivation in Phase 9)
   - `RegModemConfig1 = 0x62` → BW=62.5 kHz, CR=4/5, explicit header
   - `RegModemConfig2 = 0x74` → SF7, CRC enabled
   - `RegModemConfig3 = 0x04` → AGC auto-on
