@@ -159,12 +159,23 @@ static void log_rx_packet(const analyzer_event_t *evt) {
     char src[12], dst[12];
     fmt_addr(src, sizeof(src), rx->src_addr);
     fmt_addr(dst, sizeof(dst), rx->dst_addr);
-    uint8_t hops     = rx->flags & 0x07;
-    bool    want_ack = (rx->flags >> 3) & 0x01;
+    uint8_t hops      = rx->flags & 0x07;
+    uint8_t hop_start = (rx->flags >> 5) & 0x07;
+    bool    want_ack  = (rx->flags >> 3) & 0x01;
+    /* "hops: 3/3" = direct; "hops: 2/3" = forwarded once */
+    char hops_buf[16];
+    if (hop_start > 0 && hop_start != hops)
+        snprintf(hops_buf, sizeof(hops_buf), "%u/%u", hops, hop_start);
+    else
+        snprintf(hops_buf, sizeof(hops_buf), "%u", hop_start ? hop_start : hops);
 
     printf("\n--- RX  %s  ----------------------------------------\n", ts);
-    printf("    src: %-12s  dst: %-12s  pkt: 0x%08" PRIx32 "  hops: %u%s\n",
-           src, dst, rx->packet_id, hops, want_ack ? "  [ACK]" : "");
+    if (rx->relay_node)
+        printf("    src: %-12s  dst: %-12s  pkt: 0x%08" PRIx32 "  hops: %s  via !xx%02x%s\n",
+               src, dst, rx->packet_id, hops_buf, rx->relay_node, want_ack ? "  [ACK]" : "");
+    else
+        printf("    src: %-12s  dst: %-12s  pkt: 0x%08" PRIx32 "  hops: %s%s\n",
+               src, dst, rx->packet_id, hops_buf, want_ack ? "  [ACK]" : "");
     printf("    RF:  RSSI %d dBm  SNR %d dB\n", rx->rssi_dbm, rx->snr_db);
     printf("    ---\n");
 

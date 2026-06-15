@@ -119,6 +119,19 @@ All events are printed as human-readable blocks on UART0 (USB serial, 115 200 ba
 ------------------------------------------------------------------------
 ```
 
+### Decoded RX packet — relayed (hop_start > hop_limit)
+
+```
+--- RX  00:02:08.700  ----------------------------------------
+    src: !8487f01c     dst: BROADCAST     pkt: 0xcf56bd05  hops: 6/7  via !xx1c
+    RF:  RSSI -88 dBm  SNR +6 dB
+    ---
+    TEXT_MESSAGE_APP: "hello mesh"
+------------------------------------------------------------------------
+```
+
+`hops: 6/7` means the packet started with hop_limit=7 and has been relayed once. `via !xx1c` shows the low byte of the last relay node's address.
+
 ### Undecoded RX packet (foreign channel)
 
 ```
@@ -218,7 +231,7 @@ main/
 │   ├── rx_task.c             DIO0 → FIFO read → decode → event queue
 │   ├── tx_task.c             60 s NodeInfo broadcast
 │   ├── noise_task.c          32-sample noise floor averaging
-│   └── logger_task.c         JSON serialisation to UART
+│   └── logger_task.c         human-readable packet log to UART
 └── display/
     └── oled.h/.c             SSD1306 minimal I2C driver + 5×7 font
 ```
@@ -231,13 +244,15 @@ main/
 | `lora_rx` | 4096 | 4 | Reads FIFO, decrypts, decodes, posts event |
 | `lora_tx` | 4096 | 3 | 60 s NodeInfo TX |
 | `noise` | 2048 | 2 | 5 s noise floor sampling |
-| `logger` | 4096 | 1 | JSON serialisation |
+| `logger` | 4096 | 1 | Human-readable packet log to UART |
 | `display` | 2048 | 1 | 1 Hz OLED update |
 
 ## Cryptography Notes
 
 - Encryption: **AES-128-CTR** using ESP-IDF's bundled mbedTLS (`esp_mbedtls`)
-- The CTR nonce is `[packet_id LE 4B][sender_addr LE 4B][zeros 8B]`
+- The CTR nonce layout matches Meshtastic's `CryptoEngine::encrypt(uint64_t id, uint32_t from)`:
+  `[packet_id LE 4B] [0x00 0x00 0x00 0x00] [sender_addr LE 4B] [0x00 0x00 0x00 0x00]`
+  (bytes 4–7 are the upper 32 bits of the 64-bit `id` — always zero for normal packets)
 - CTR mode uses the same key setup for both encrypt and decrypt
 - PSK expansion algorithm is identical to `meshtastic/firmware` `Channels.cpp`
 

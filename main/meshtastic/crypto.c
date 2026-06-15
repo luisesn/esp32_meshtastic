@@ -58,19 +58,21 @@ uint8_t crypto_get_channel_hash(void) {
 
 void crypto_ctr(uint8_t *data, size_t len,
                 uint32_t packet_id, uint32_t sender_addr) {
-    /* Meshtastic CTR nonce layout (16 bytes):
-     *   bytes 0–3  : packet_id   (little-endian)
-     *   bytes 4–7  : sender_addr (little-endian)
-     *   bytes 8–15 : 0x00 padding */
+    /* Meshtastic CTR nonce layout (16 bytes) — matches CryptoEngine::encrypt(uint64_t id, uint32_t from):
+     *   bytes  0–3  : packet_id   (low  32 bits of uint64_t id, little-endian)
+     *   bytes  4–7  : 0x00        (high 32 bits of uint64_t id, always zero for normal packets)
+     *   bytes  8–11 : sender_addr (from, little-endian)
+     *   bytes 12–15 : 0x00 padding */
     uint8_t nonce[16] = {0};
-    nonce[0] = (uint8_t)(packet_id);
-    nonce[1] = (uint8_t)(packet_id >> 8);
-    nonce[2] = (uint8_t)(packet_id >> 16);
-    nonce[3] = (uint8_t)(packet_id >> 24);
-    nonce[4] = (uint8_t)(sender_addr);
-    nonce[5] = (uint8_t)(sender_addr >> 8);
-    nonce[6] = (uint8_t)(sender_addr >> 16);
-    nonce[7] = (uint8_t)(sender_addr >> 24);
+    nonce[0]  = (uint8_t)(packet_id);
+    nonce[1]  = (uint8_t)(packet_id >> 8);
+    nonce[2]  = (uint8_t)(packet_id >> 16);
+    nonce[3]  = (uint8_t)(packet_id >> 24);
+    /* nonce[4..7] = 0x00 (upper word of uint64_t id) */
+    nonce[8]  = (uint8_t)(sender_addr);
+    nonce[9]  = (uint8_t)(sender_addr >> 8);
+    nonce[10] = (uint8_t)(sender_addr >> 16);
+    nonce[11] = (uint8_t)(sender_addr >> 24);
 
     /* ESP hardware AES-CTR — same key setup for both encrypt and decrypt */
     esp_aes_setkey(&g_aes_ctx, g_aes_key, 128);

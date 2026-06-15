@@ -41,6 +41,7 @@ void lora_rx_task(void *pvParameters) {
         int8_t  snr  = sx1276_get_snr();
 
         ESP_LOGI(TAG, "Packet received: %u bytes, RSSI=%ddBm, SNR=%ddB", nb_bytes, rssi, snr);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, raw, nb_bytes, ESP_LOG_INFO);
 
         /* Build event */
         analyzer_event_t evt = {
@@ -58,10 +59,13 @@ void lora_rx_task(void *pvParameters) {
             evt.rx.src_addr  = pkt.src_addr;
             evt.rx.dst_addr  = pkt.dst_addr;
             evt.rx.packet_id = pkt.packet_id;
-            evt.rx.flags     = (uint8_t)(pkt.hop_limit | (pkt.want_ack ? 0x08 : 0x00));
-            evt.rx.decoded   = true;
+            evt.rx.flags      = (uint8_t)(pkt.hop_limit | (pkt.want_ack ? 0x08 : 0x00) | ((pkt.hop_start & 0x07) << 5));
+            evt.rx.relay_node = pkt.relay_node;
+            evt.rx.decoded    = true;
 
             /* Try to parse inner Data protobuf */
+            ESP_LOGI(TAG, "Decrypted payload (%u bytes):", pkt.payload_len);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, pkt.payload, pkt.payload_len, ESP_LOG_INFO);
             mesh_data_t data;
             if (proto_decode_data(pkt.payload, pkt.payload_len, &data)) {
                 evt.rx.portnum = (uint8_t)data.portnum;

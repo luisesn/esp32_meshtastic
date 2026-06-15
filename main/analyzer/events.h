@@ -22,6 +22,7 @@ typedef struct {
     uint32_t dst_addr;
     uint32_t packet_id;
     uint8_t  flags;
+    uint8_t  relay_node;               /* low 8 bits of last relay node addr, 0 = direct */
     bool     decoded;                   /* true = our channel, payload parsed */
     uint8_t  portnum;
     uint8_t  raw_payload[242];

@@ -143,9 +143,14 @@ bool proto_decode_data(const uint8_t *buf, size_t len, mesh_data_t *out) {
                 out->payload_len = (uint16_t)copy_len;
             }
             pos += (size_t)dlen;
+        } else if (wire_type == 1) {   /* int64/sfixed64: skip 8 bytes */
+            if (pos + 8 > len) return false;
+            pos += 8;
+        } else if (wire_type == WT_FIX32) {  /* float/fixed32: skip 4 bytes */
+            if (pos + 4 > len) return false;
+            pos += 4;
         } else {
-            /* Unsupported wire type — skip unknown fields gracefully */
-            return false;
+            return false;  /* wire types 3/4 (deprecated groups) = malformed */
         }
     }
     return true;

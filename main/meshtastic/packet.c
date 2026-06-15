@@ -40,12 +40,14 @@ size_t packet_build_nodeinfo(uint32_t node_addr, const uint8_t mac[6],
 
     /* 4. Build OTA packet header */
     mesh_header_t hdr = {
-        .dst_addr  = 0xFFFFFFFF,    /* broadcast */
-        .src_addr  = node_addr,
-        .packet_id = pkt_id,
-        /* flags: hop_limit=3, want_ack=0, channel_hash upper nibble in bits[7:4] */
-        .flags = (uint8_t)(3 & 0x07) |
-                 ((crypto_get_channel_hash() & 0xF0)),
+        .dst_addr   = 0xFFFFFFFF,    /* broadcast */
+        .src_addr   = node_addr,
+        .packet_id  = pkt_id,
+        /* flags: hop_limit=3, want_ack=0, via_mqtt=0, hop_start=3 (Meshtastic 2.x format) */
+        .flags      = (uint8_t)((3 & 0x07) | ((3 & 0x07) << 5)),
+        .channel    = crypto_get_channel_hash(),
+        .next_hop   = 0,
+        .relay_node = 0,
     };
     memcpy(out_buf, &hdr, MESH_HEADER_LEN);
     memcpy(out_buf + MESH_HEADER_LEN, data_buf, data_len);
@@ -60,13 +62,11 @@ bool packet_decode(const uint8_t *raw, uint8_t raw_len, mesh_packet_t *out) {
     out->dst_addr  = hdr->dst_addr;
     out->src_addr  = hdr->src_addr;
     out->packet_id = hdr->packet_id;
-    out->hop_limit = hdr->flags & 0x07;
-    out->want_ack  = (hdr->flags >> 3) & 0x01;
-
-    /* Quick channel filter: upper nibble of flags must match our channel hash */
-    uint8_t pkt_hash_nibble = hdr->flags & 0xF0;
-    uint8_t our_hash_nibble = crypto_get_channel_hash() & 0xF0;
-    if (pkt_hash_nibble != our_hash_nibble) return false;
+    out->hop_limit  = hdr->flags & 0x07;
+    out->want_ack   = (hdr->flags >> 3) & 0x01;
+    out->hop_start  = (hdr->flags >> 5) & 0x07;
+    out->relay_node = hdr->relay_node;
+    /* Channel validation is implicit: wrong-channel AES-CTR output fails protobuf parsing. */
 
     out->payload_len = raw_len - MESH_HEADER_LEN;
     memcpy(out->payload, raw + MESH_HEADER_LEN, out->payload_len);

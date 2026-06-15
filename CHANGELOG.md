@@ -6,6 +6,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Phase 11] — Meshtastic 2.5+ Compatibility + AES Nonce Fix — 2026-06-15
+
+### Fixed
+
+- **AES-128-CTR nonce layout was wrong** — all packet decryption was silently failing since initial implementation.
+  - Meshtastic's `CryptoEngine::encrypt(uint64_t id, uint32_t from, …)` takes a 64-bit `id`, so the nonce layout is:
+    `[packet_id LE 4B] [0x00 0x00 0x00 0x00] [sender_addr LE 4B] [0x00 0x00 0x00 0x00]`
+  - Our code incorrectly placed `sender_addr` at bytes 4–7 (the zero-pad slot) instead of bytes 8–11.
+    This produced a completely different AES keystream and garbage decrypted output on every received packet.
+
+- **OTA header length mismatch for Meshtastic 2.5+**
+  - Meshtastic 2.3 added a `channel` byte to the PacketHeader (13 → 14 bytes).
+  - Meshtastic 2.5 added `next_hop` and `relay_node` bytes (14 → 16 bytes).
+  - Our `MESH_HEADER_LEN` was hardcoded to 13 — we were passing up to 3 header bytes into AES-CTR
+    as payload, corrupting both the keystream offset and the proto parse input.
+  - Updated `MESH_HEADER_LEN` to **16** and expanded `mesh_header_t` accordingly.
+
+- **`proto_decode_data` returned false on valid unknown wire types** (wire type 1 = int64, wire type 5 = fixed32).
+  - These are valid protobuf types that newer Meshtastic firmware may include in the `Data` message
+    (e.g. `bitfield` field 9).  The decoder now skips them with the correct byte-skip instead of failing.
+
+### Added
+- `channel`, `next_hop`, `relay_node` fields in `mesh_header_t` (packed, matches Meshtastic 2.5+ OTA struct)
+- `relay_node` field in `mesh_packet_t`, `rx_packet_t` (event struct)
+- Logger now prints `via !xxNN` on the packet header line when `relay_node ≠ 0`
+- `ESP_LOG_BUFFER_HEX` of raw received bytes and decrypted payload in `rx_task.c` (INFO level) — aids field debugging
+- `packet_build_nodeinfo()` now fills `channel = crypto_get_channel_hash()` so our TX packets include the channel byte expected by 2.5+ receivers
+
+---
+
 ## [Phase 10] — Human-Readable Serial Output + Full Portnum Parsing — 2026-06-15
 
 ### Added
@@ -120,7 +150,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `crypto_init()`: expands PSK index → raw 16-byte AES key; derives channel hash; inits mbedTLS context
   - `crypto_expand_psk()`: implements the Meshtastic default PSK expansion algorithm (from `Channels.cpp`)
   - `crypto_channel_hash()`: XOR-folds channel name bytes and key bytes into a 1-byte hash
-  - `crypto_ctr()`: in-place AES-128-CTR using `mbedtls_aes_crypt_ctr()`; nonce = `[packet_id LE][sender_addr LE][zeros]`
+  - `crypto_ctr()`: in-place AES-128-CTR using `mbedtls_aes_crypt_ctr()`; nonce = `[packet_id LE 4B][zeros 4B][sender_addr LE 4B][zeros 4B]` (corrected in Phase 11)
   - `crypto_get_channel_hash()`: returns the pre-computed channel hash
 - Verified values for `MESH_CHANNEL_NAME="SFNarrow"` + `MESH_PSK_INDEX=1`:
   - AES key: `d4f1bb3a20290759f0bcffabcf4e6901`
@@ -133,8 +163,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - `main/meshtastic/packet.c` / `packet.h`: OTA packet header encode/decode
-  - 13-byte header: dst_addr, src_addr, packet_id, flags (hop_limit + want_ack + channel hash nibble)
-  - `packet_decode()`: validates header, applies channel hash filter (upper nibble of flags), decrypts payload in-place
+  - 13-byte header (original): dst_addr, src_addr, packet_id, flags — expanded to 16 bytes in Phase 11
+  - `packet_decode()`: validates header, decrypts payload in-place
   - `packet_build_nodeinfo()`: builds a full TX packet ready to write to the SX1276 FIFO
 - `main/analyzer/rx_task.c`: `lora_rx_task` (priority 4)
   - Waits on `g_rx_ready_queue` signalled by the IRQ handler task
