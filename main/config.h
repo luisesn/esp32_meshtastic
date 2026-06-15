@@ -29,9 +29,6 @@
 #define LORA_REGION_FREQ_END_HZ     869650000UL   /* 869.650 MHz */
 
 /* ── Radio PHY ──────────────────────────────────────────────────────────── */
-/* LORA_FREQ_HZ is derived via mesh_channel_freq_hz() at runtime; this       */
-/* macro reflects that computed value for reference only.                     */
-#define LORA_FREQ_HZ        869618750UL     /* djb2("SFNarrow")%4=3 slot     */
 #define LORA_BW_KHZ         62.5f           /* RegModemConfig1 BW bits = 0b0110 */
 #define LORA_SF             7
 #define LORA_CR             5               /* 4/5 */
