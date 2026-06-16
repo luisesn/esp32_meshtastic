@@ -8,6 +8,50 @@
 
 uint32_t g_tx_packet_id = 1;
 
+size_t packet_build_position(uint32_t node_addr, int32_t lat_i, int32_t lon_i,
+                             int32_t alt_m, uint8_t *out_buf) {
+    /* 1. Build Position message */
+    mesh_position_t pos = {
+        .latitude_i  = lat_i,
+        .longitude_i = lon_i,
+        .altitude    = alt_m,
+        .time        = 0,   /* no GPS time source — leave unset */
+    };
+
+    uint8_t pos_buf[32];
+    size_t  pos_len = proto_encode_position(&pos, pos_buf, sizeof(pos_buf));
+    if (!pos_len) return 0;
+
+    /* 2. Wrap in Data message */
+    mesh_data_t data = {0};
+    data.portnum     = PORTNUM_POSITION_APP;
+    data.payload_len = (uint16_t)pos_len;
+    memcpy(data.payload, pos_buf, pos_len);
+
+    uint8_t data_buf[64];
+    size_t  data_len = proto_encode_data(&data, data_buf, sizeof(data_buf));
+    if (!data_len) return 0;
+
+    /* 3. Encrypt */
+    uint32_t pkt_id = g_tx_packet_id++;
+    crypto_ctr(data_buf, data_len, pkt_id, node_addr);
+
+    /* 4. Prepend header */
+    mesh_header_t hdr = {
+        .dst_addr   = 0xFFFFFFFF,
+        .src_addr   = node_addr,
+        .packet_id  = pkt_id,
+        .flags      = (uint8_t)((3 & 0x07) | ((3 & 0x07) << 5)),
+        .channel    = crypto_get_channel_hash(),
+        .next_hop   = 0,
+        .relay_node = 0,
+    };
+    memcpy(out_buf, &hdr, MESH_HEADER_LEN);
+    memcpy(out_buf + MESH_HEADER_LEN, data_buf, data_len);
+
+    return MESH_HEADER_LEN + data_len;
+}
+
 size_t packet_build_nodeinfo(uint32_t node_addr, const uint8_t mac[6],
                              uint8_t *out_buf) {
     /* 1. Build User message */

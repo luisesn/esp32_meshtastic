@@ -83,6 +83,26 @@ input[type=checkbox] { cursor: pointer; accent-color: var(--blue); }
 .raw pre { color: var(--cyan); font-size: 11px; white-space: pre-wrap; word-break: break-all;
            line-height: 1.5; }
 
+/* Position panel */
+#pos-panel { background: var(--bg2); border-bottom: 1px solid var(--border);
+             padding: 6px 14px; display: flex; gap: 8px; align-items: center;
+             flex-shrink: 0; flex-wrap: wrap; }
+#pos-panel label { font-size: 11px; color: var(--muted); display: flex;
+                   align-items: center; gap: 4px; }
+#pos-panel input[type=number] { width: 110px; background: var(--bg3); color: var(--text);
+                                 border: 1px solid var(--border); border-radius: 4px;
+                                 padding: 2px 6px; font-family: inherit; font-size: 12px; }
+#pos-panel input[type=number]:focus { outline: none; border-color: var(--blue); }
+#pos-panel input[type=number]:disabled { opacity: 0.4; }
+.pos-btn { background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+           padding: 3px 12px; border-radius: 6px; cursor: pointer; font-family: inherit;
+           font-size: 12px; transition: border-color 0.15s; }
+.pos-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.pos-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#btnSendPos { border-color: var(--purple); color: var(--purple); }
+#btnSendPos:hover:not(:disabled) { border-color: var(--purple); background: #2a1a3d; }
+#posStatus { font-size: 11px; color: var(--muted); margin-left: 4px; }
+
 /* No-serial warning */
 #noSerial { display: none; background: #2d1b00; border: 1px solid var(--orange);
             margin: 20px; padding: 12px 16px; border-radius: 6px; color: var(--orange);
@@ -116,6 +136,15 @@ input[type=checkbox] { cursor: pointer; accent-color: var(--blue); }
   <button class="fbtn" data-f="noise">Noise</button>
   <button class="fbtn" data-f="tx_done">TX</button>
   <button id="btnClear">Clear</button>
+</div>
+
+<div id="pos-panel">
+  <button class="pos-btn" id="btnGetGps" disabled>Get GPS</button>
+  <label>Lat <input type="number" id="inLat" step="0.0000001" placeholder="52.0000000" disabled></label>
+  <label>Lon <input type="number" id="inLon" step="0.0000001" placeholder="4.0000000" disabled></label>
+  <label>Alt&nbsp;m <input type="number" id="inAlt" step="1" value="0" disabled></label>
+  <button class="pos-btn" id="btnSendPos" disabled>Send to Mesh</button>
+  <span id="posStatus">Connect serial first</span>
 </div>
 
 <div id="log">
@@ -158,6 +187,7 @@ btnConnect.addEventListener('click', async () => {
     btnConnect.classList.add('connected');
     statusEl.textContent = 'Connected';
     readLoop();
+    updatePosPanel();
   } catch (e) {
     if (e.name !== 'NotFoundError') statusEl.textContent = 'Error: ' + e.message;
     s_port = null;
@@ -171,6 +201,7 @@ async function doDisconnect() {
   btnConnect.textContent = 'Connect';
   btnConnect.classList.remove('connected');
   statusEl.textContent = 'Disconnected';
+  updatePosPanel();
 }
 
 // ── Serial read loop ───────────────────────────────────────────────────────
@@ -345,6 +376,52 @@ document.getElementById('filters').addEventListener('click', e => {
   document.querySelectorAll('#log .pkt').forEach(el => {
     el.style.display = (s_filter === 'all' || el.dataset.type === s_filter) ? '' : 'none';
   });
+});
+
+// ── Position panel ─────────────────────────────────────────────────────────
+function updatePosPanel() {
+  const on = !!s_port;
+  ['inLat','inLon','inAlt','btnGetGps','btnSendPos'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !on;
+  });
+  document.getElementById('posStatus').textContent = on ? '' : 'Connect serial first';
+}
+
+document.getElementById('btnGetGps').addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    document.getElementById('posStatus').textContent = 'Geolocation not available'; return;
+  }
+  document.getElementById('posStatus').textContent = 'Acquiring GPS…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    document.getElementById('inLat').value = pos.coords.latitude.toFixed(7);
+    document.getElementById('inLon').value = pos.coords.longitude.toFixed(7);
+    if (pos.coords.altitude !== null)
+      document.getElementById('inAlt').value = Math.round(pos.coords.altitude);
+    document.getElementById('posStatus').textContent =
+      'GPS: ±' + Math.round(pos.coords.accuracy) + ' m';
+  }, err => {
+    document.getElementById('posStatus').textContent = 'GPS error: ' + err.message;
+  }, { enableHighAccuracy: true, timeout: 10000 });
+});
+
+document.getElementById('btnSendPos').addEventListener('click', async () => {
+  const lat = parseFloat(document.getElementById('inLat').value);
+  const lon = parseFloat(document.getElementById('inLon').value);
+  const alt = parseFloat(document.getElementById('inAlt').value) || 0;
+  if (!s_port || isNaN(lat) || isNaN(lon)) {
+    document.getElementById('posStatus').textContent = 'Need lat + lon'; return;
+  }
+  const cmd = JSON.stringify({ cmd: 'send_position', lat, lon, alt }) + '\n';
+  try {
+    const writer = s_port.writable.getWriter();
+    await writer.write(new TextEncoder().encode(cmd));
+    writer.releaseLock();
+    document.getElementById('posStatus').textContent =
+      'Sent: ' + lat.toFixed(5) + ', ' + lon.toFixed(5) + ' alt=' + alt + 'm';
+  } catch (e) {
+    document.getElementById('posStatus').textContent = 'Write error: ' + e.message;
+  }
 });
 
 // ── Clear ──────────────────────────────────────────────────────────────────

@@ -9,6 +9,9 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
 
 #include "config.h"
 #include "sx1276/sx1276.h"
@@ -24,6 +27,7 @@ static const char *TAG = "main";
 
 QueueHandle_t    g_event_queue     = NULL;
 QueueHandle_t    g_rx_ready_queue  = NULL;
+QueueHandle_t    g_tx_request_queue = NULL;
 SemaphoreHandle_t g_tx_done_sem    = NULL;
 TaskHandle_t     g_irq_task_handle = NULL;
 analyzer_stats_t g_stats           = {0};
@@ -36,6 +40,7 @@ void lora_rx_task(void *pvParameters);
 void lora_tx_task(void *pvParameters);
 void noise_sampler_task(void *pvParameters);
 void logger_task(void *pvParameters);
+void cmd_task(void *pvParameters);
 
 /* ── DIO0 GPIO ISR ───────────────────────────────────────────────────────── */
 
@@ -136,6 +141,20 @@ static void display_task(void *pvParameters) {
 void app_main(void) {
     ESP_LOGI(TAG, "TLoRA v1 — Meshtastic Signal & Noise Analyzer");
 
+    /* UART VFS: install driver so fgets(stdin) works alongside printf(stdout) */
+    uart_vfs_dev_register();
+    uart_driver_install(UART_NUM_0, 512, 0, 0, NULL, 0);
+    uart_vfs_dev_use_driver(0);
+
+    /* NVS required by BT stack for bond/config storage */
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_ret = nvs_flash_init();
+    }
+    if (nvs_ret != ESP_OK)
+        ESP_LOGW(TAG, "NVS init: %s", esp_err_to_name(nvs_ret));
+
     /* Read MAC address and derive node address */
     esp_read_mac(g_node_mac, ESP_MAC_WIFI_STA);
     g_node_addr = ((uint32_t)g_node_mac[2] << 24) |
@@ -160,11 +179,12 @@ void app_main(void) {
         ESP_LOGW(TAG, "BT SPP init failed — Bluetooth disabled");
 
     /* FreeRTOS primitives */
-    g_event_queue    = xQueueCreate(16, sizeof(analyzer_event_t));
-    g_rx_ready_queue = xQueueCreate(4,  sizeof(uint8_t));
-    g_tx_done_sem    = xSemaphoreCreateBinary();
-    g_stats_mutex    = xSemaphoreCreateMutex();
-    configASSERT(g_event_queue && g_rx_ready_queue && g_tx_done_sem && g_stats_mutex);
+    g_event_queue      = xQueueCreate(16, sizeof(analyzer_event_t));
+    g_rx_ready_queue   = xQueueCreate(4,  sizeof(uint8_t));
+    g_tx_request_queue = xQueueCreate(4,  sizeof(lora_tx_pkt_t));
+    g_tx_done_sem      = xSemaphoreCreateBinary();
+    g_stats_mutex      = xSemaphoreCreateMutex();
+    configASSERT(g_event_queue && g_rx_ready_queue && g_tx_request_queue && g_tx_done_sem && g_stats_mutex);
 
     /* GPIO interrupt service */
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
@@ -181,6 +201,7 @@ void app_main(void) {
     xTaskCreate(noise_sampler_task, "noise",       2048, NULL, 2, NULL);
     xTaskCreate(logger_task,        "logger",      4096, NULL, 1, NULL);
     xTaskCreate(display_task,       "display",     2048, NULL, 1, NULL);
+    xTaskCreate(cmd_task,           "cmd",         4096, NULL, 1, NULL);
 
     /* Start receiving */
     sx1276_set_rx_mode();

@@ -57,6 +57,40 @@ static size_t write_bool(uint8_t *buf, size_t pos, size_t buf_size,
     return write_varint(buf, pos, buf_size, 1);
 }
 
+static size_t write_int32(uint8_t *buf, size_t pos, size_t buf_size,
+                          uint32_t field_num, int32_t val) {
+    if (val == 0) return pos;   /* skip default */
+    pos = write_tag(buf, pos, buf_size, field_num, WT_VARINT);
+    if (!pos) return 0;
+    /* Sign-extend to 64-bit so negative int32 encodes as 10-byte varint */
+    return write_varint(buf, pos, buf_size, (uint64_t)(int64_t)val);
+}
+
+/* sfixed32: always write 4 bytes LE (no skip-on-zero — 0,0 is a valid coordinate) */
+static size_t write_sfixed32(uint8_t *buf, size_t pos, size_t buf_size,
+                              uint32_t field_num, int32_t val) {
+    pos = write_tag(buf, pos, buf_size, field_num, WT_FIX32);
+    if (!pos) return 0;
+    if (pos + 4 > buf_size) return 0;
+    uint32_t u = (uint32_t)val;
+    buf[pos++] = (uint8_t)(u);
+    buf[pos++] = (uint8_t)(u >>  8);
+    buf[pos++] = (uint8_t)(u >> 16);
+    buf[pos++] = (uint8_t)(u >> 24);
+    return pos;
+}
+
+size_t proto_encode_position(const mesh_position_t *pos, uint8_t *buf, size_t buf_size) {
+    size_t p = 0;
+    p = write_sfixed32(buf, p, buf_size, 1, pos->latitude_i);   /* sfixed32 field 1 */
+    if (!p) return 0;
+    p = write_sfixed32(buf, p, buf_size, 2, pos->longitude_i);  /* sfixed32 field 2 */
+    if (!p) return 0;
+    p = write_int32(buf, p, buf_size, 3, pos->altitude);        /* int32   field 3 */
+    p = write_uint32(buf, p, buf_size, 9, pos->time);           /* uint32  field 9 */
+    return p;
+}
+
 /* ── Varint / length-delimited decode helpers ───────────────────────────── */
 
 static size_t read_fixed32(const uint8_t *buf, size_t pos, size_t len, uint32_t *out) {

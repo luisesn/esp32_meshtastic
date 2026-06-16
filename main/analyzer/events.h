@@ -65,10 +65,18 @@ typedef struct {
     disp_pkt_t disp_pkts[2];  /* [0]=most recent, [1]=second most recent */
 } analyzer_stats_t;
 
+/* ── On-demand TX request (cmd_task → lora_tx_task) ─────────────────────── */
+
+typedef struct {
+    uint8_t data[255];  /* fully-built, encrypted OTA packet */
+    uint8_t len;
+} lora_tx_pkt_t;
+
 /* ── Global handles (defined in main.c) ─────────────────────────────────── */
 
 extern QueueHandle_t    g_event_queue;      /* producers → logger_task */
 extern QueueHandle_t    g_rx_ready_queue;   /* irq_handler → lora_rx_task */
+extern QueueHandle_t    g_tx_request_queue; /* cmd_task → lora_tx_task */
 extern SemaphoreHandle_t g_tx_done_sem;     /* irq_handler → lora_tx_task */
 extern TaskHandle_t     g_irq_task_handle;  /* for task notification from ISR */
 extern analyzer_stats_t g_stats;

@@ -10,6 +10,7 @@ idf_component_register(
         "analyzer/tx_task.c"
         "analyzer/noise_task.c"
         "analyzer/logger_task.c"
+        "analyzer/cmd_task.c"
         "display/oled.c"
         "bt/bt_spp.c"
     INCLUDE_DIRS
@@ -29,4 +30,6 @@ idf_component_register(
         freertos
         esp_hw_support
         bt
+        nvs_flash
+        esp_driver_uart
 )

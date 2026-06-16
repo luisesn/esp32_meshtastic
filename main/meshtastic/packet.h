@@ -32,6 +32,13 @@ typedef struct {
     uint8_t  payload_len;
 } mesh_packet_t;
 
+/* Build a Position TX packet.
+ * lat_i / lon_i: degrees × 1e7 (sfixed32), alt_m: metres HAE (int32)
+ * out_buf: caller supplies buffer ≥ MAX_LORA_PAYLOAD
+ * Returns number of bytes to transmit */
+size_t packet_build_position(uint32_t node_addr, int32_t lat_i, int32_t lon_i,
+                             int32_t alt_m, uint8_t *out_buf);
+
 /* Build a NodeInfo TX packet.
  * node_addr: our own 32-bit address
  * mac: 6-byte MAC address

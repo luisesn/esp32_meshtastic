@@ -3,6 +3,7 @@
 #ifdef CONFIG_BT_ENABLED
 
 #include <stdatomic.h>
+#include <string.h>
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
@@ -11,9 +12,19 @@
 
 static const char *TAG = "bt_spp";
 
+/* Stored so ESP_SPP_START_EVT callback can set them after the server starts */
+static char s_device_name[32];
+
 /* Atomic so logger_task reads are safe without a mutex */
 static atomic_uint_fast32_t s_handle    = 0;
 static atomic_bool           s_congested = false;
+
+/* Receive line buffer — accumulated across DATA_IND events */
+static char   s_rx_buf[320];
+static size_t s_rx_len = 0;
+
+/* Forward declaration — implemented in analyzer/cmd_task.c */
+void cmd_process_line(const char *line);
 
 static void spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
     switch (event) {
@@ -23,6 +34,16 @@ static void spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
             esp_spp_start_srv(ESP_SPP_SEC_NONE, ESP_SPP_ROLE_SLAVE, 0, "TLoRA");
         } else {
             ESP_LOGE(TAG, "SPP init failed: %d", param->init.status);
+        }
+        break;
+    case ESP_SPP_START_EVT:
+        /* Server is listening — now safe to advertise */
+        if (param->start.status == ESP_SPP_SUCCESS) {
+            esp_bt_gap_set_device_name(s_device_name);
+            esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+            ESP_LOGI(TAG, "SPP server started — device name: %s", s_device_name);
+        } else {
+            ESP_LOGE(TAG, "SPP server start failed: %d", param->start.status);
         }
         break;
     case ESP_SPP_SRV_OPEN_EVT:
@@ -39,6 +60,22 @@ static void spp_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
     case ESP_SPP_CONG_EVT:
         atomic_store(&s_congested, param->cong.cong);
         break;
+    case ESP_SPP_DATA_IND_EVT: {
+        const uint8_t *p   = param->data_ind.data;
+        uint16_t       rem = param->data_ind.len;
+        while (rem--) {
+            uint8_t c = *p++;
+            if (c == '\r') continue;
+            if (c == '\n') {
+                s_rx_buf[s_rx_len] = '\0';
+                if (s_rx_len > 0) cmd_process_line(s_rx_buf);
+                s_rx_len = 0;
+            } else if (s_rx_len < sizeof(s_rx_buf) - 1) {
+                s_rx_buf[s_rx_len++] = (char)c;
+            }
+        }
+        break;
+    }
     default:
         break;
     }
@@ -50,6 +87,9 @@ static void gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *par
 
 esp_err_t bt_spp_init(const char *device_name) {
     esp_err_t ret;
+
+    strncpy(s_device_name, device_name, sizeof(s_device_name) - 1);
+    s_device_name[sizeof(s_device_name) - 1] = '\0';
 
     /* Release BLE RAM — Classic BT only */
     ret = esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
@@ -84,13 +124,14 @@ esp_err_t bt_spp_init(const char *device_name) {
     esp_bt_gap_register_callback(gap_callback);
     esp_spp_register_callback(spp_callback);
 
-    esp_bt_gap_set_device_name(device_name);
-    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+    /* Do NOT call set_device_name / set_scan_mode here — they must be called
+     * after the SPP server starts (ESP_SPP_START_EVT) or the device will not
+     * appear in scans. */
 
     esp_spp_cfg_t spp_cfg = {
-        .mode             = ESP_SPP_MODE_CB,
+        .mode              = ESP_SPP_MODE_CB,
         .enable_l2cap_ertm = true,
-        .tx_buffer_size   = 0,
+        .tx_buffer_size    = 0,
     };
     ret = esp_spp_enhanced_init(&spp_cfg);
     if (ret != ESP_OK) {
@@ -98,7 +139,6 @@ esp_err_t bt_spp_init(const char *device_name) {
         return ret;
     }
 
-    ESP_LOGI(TAG, "BT SPP init done — device name: %s", device_name);
     return ESP_OK;
 }
 

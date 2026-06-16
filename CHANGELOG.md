@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Phase 13] — Position TX + BT Discoverability Fixes — 2026-06-15
+
+### Added
+
+- **Position packet TX** — the device can now broadcast a `POSITION_APP` packet to the mesh on demand:
+  - `proto_encode_position()` in `proto_encode.c`: encodes a `Position` protobuf using `sfixed32` (field tag `WT_FIX32`) for `latitude_i` / `longitude_i` and signed varint for `altitude`; new helpers `write_sfixed32()` and `write_int32()` added alongside the existing `write_uint32()`
+  - `packet_build_position(node_addr, lat_i, lon_i, alt_m, out_buf)` in `packet.c`: wraps the position proto, encrypts with AES-128-CTR, and assembles the full 16-byte OTA header + ciphertext into a ready-to-transmit buffer
+  - `lora_tx_pkt_t` struct (255-byte data + 1-byte length) and `g_tx_request_queue` (depth 4) added to `events.h`
+
+- **On-demand TX queue** — `tx_task.c` rewritten with a `do_tx()` helper and `xQueueReceive()` dispatch:
+  - `lora_tx_task` blocks on `g_tx_request_queue` with a timeout equal to the remaining NodeInfo interval
+  - On-demand packets (e.g. position) are transmitted immediately when received; the NodeInfo timer fires when the queue times out — no polling, no busy-wait
+
+- **`cmd_task.c`** (new file) — reads newline-delimited JSON commands from UART0 stdin:
+  - `json_get_double()`: minimal key-value extractor using `strstr` + `strtod`; no dynamic allocation
+  - `handle_send_position()`: converts `lat`/`lon`/`alt` doubles to `int32_t` scaled values (`×1e7` for lat/lon), calls `packet_build_position()`, posts `lora_tx_pkt_t` to `g_tx_request_queue`
+  - Registered in `CMakeLists.txt` (SRCS) and created in `app_main()` with 4096-byte stack, priority 1
+
+- **UART VFS driver** in `main.c` — `uart_vfs_dev_register()` + `uart_driver_install(UART_NUM_0, …)` + `uart_vfs_dev_use_driver(0)` enables `fgets(stdin)` in `cmd_task` alongside existing `printf(stdout)` on the same UART; `esp_driver_uart` added to `CMakeLists.txt` REQUIRES
+
+- **WebSerial position panel** in `web/index.html`:
+  - **Get GPS** button: calls `navigator.geolocation.getCurrentPosition()` with `enableHighAccuracy: true`; pre-fills lat/lon/alt inputs and shows accuracy in the status line
+  - **Lat / Lon / Alt** numeric inputs: editable after GPS fill or manually
+  - **Send to Mesh** button: serialises `{"cmd":"send_position","lat":…,"lon":…,"alt":…}` and writes it via `port.writable.getWriter()` / `writer.releaseLock()` pattern
+  - All controls disabled when serial is disconnected; `updatePosPanel()` called on connect and disconnect
+
+### Fixed
+
+- **Bluetooth device not discoverable** — `esp_bt_gap_set_device_name()` and `esp_bt_gap_set_scan_mode()` were being called before `esp_spp_enhanced_init()` returned. Per the Bluedroid SPP server example, these calls must happen inside the `ESP_SPP_START_EVT` callback (after the SPP server has started). The device name is now stored in `s_device_name[32]` so the async callback can access it.
+
+- **`esp_bt_controller_enable` returning `ESP_ERR_INVALID_ARG`** — the existing `sdkconfig` had `CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y` (the Kconfig default), which initialises the controller in BLE mode. Calling `esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)` then mismatched the configured mode (checked at line 1919 of `bt.c`). Fixed by adding `CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y` to `sdkconfig.defaults` and deleting the stale generated `sdkconfig` so it regenerates correctly.
+
+- **NVS not initialised before BT** — the Bluedroid stack silently fails if `nvs_flash_init()` has not been called before `esp_bt_controller_init()`. Added NVS init (with erase-on-corruption fallback) to `app_main()` before `bt_spp_init()`.
+
+---
+
 ## [Phase 12] — NDJSON Serial Output + WebSerial UI + Bluetooth SPP — 2026-06-15
 
 ### Added

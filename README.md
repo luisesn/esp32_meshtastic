@@ -1,8 +1,8 @@
 # TLoRA v1 — Meshtastic Signal & Noise Analyzer
 
-Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and streams all events as **NDJSON** (newline-delimited JSON) over USB serial and **Bluetooth Classic SPP** simultaneously. It also broadcasts a NodeInfo packet every 60 seconds.
+Standalone ESP-IDF firmware for the **TTGO LoRa32 V1.0** (TLoRA v1) board that listens on a Meshtastic channel, decodes incoming packets, samples the LoRa noise floor, and streams all events as **NDJSON** (newline-delimited JSON) over USB serial and **Bluetooth Classic SPP** simultaneously. It also broadcasts a NodeInfo packet every 60 seconds and can transmit **Position packets** on demand.
 
-A self-contained **WebSerial browser UI** (`web/index.html`) can be opened locally or over HTTPS to connect directly to the device and display live packet data with filtering and expandable JSON views.
+A self-contained **WebSerial browser UI** (`web/index.html`) can be opened locally or over HTTPS to connect directly to the device, display live packet data with filtering and expandable JSON views, and **send your browser GPS coordinates to the mesh** with one click.
 
 ## Hardware
 
@@ -123,7 +123,32 @@ Open `web/index.html` directly in Chrome or Edge (≥ 89) or serve it over HTTPS
 2. Click **Connect** and select the TLoRA serial port (115200 baud)
 3. Packets appear in real time; click any row to expand the full JSON
 
-Features: live stats bar, type filter buttons (RX / Foreign / Noise / TX), auto-scroll, Clear button, 500-row rolling window.
+Features: live stats bar, type filter buttons (RX / Foreign / Noise / TX), auto-scroll, Clear button, 500-row rolling window, and a **Send Position** panel — click **Get GPS** to pull coordinates from the browser, then **Send to Mesh** to broadcast a Position packet over LoRa.
+
+## Sending a Position Packet
+
+The firmware accepts JSON commands on UART0 (stdin). The easiest way is via the **WebSerial UI** position panel, but any serial terminal can also send commands manually.
+
+### Via the browser UI
+
+1. Connect WebSerial.
+2. In the **Send Position** bar, click **Get GPS** (browser will ask for location permission).
+3. Edit the lat/lon/alt fields if needed, then click **Send to Mesh**.
+
+The UI writes one line:
+
+```json
+{"cmd":"send_position","lat":52.3702,"lon":4.8952,"alt":5}
+```
+
+### Manually (serial terminal)
+
+```bash
+# From any terminal connected at 115200 baud
+echo '{"cmd":"send_position","lat":52.3702,"lon":4.8952,"alt":5}' > /dev/ttyUSB0
+```
+
+The `cmd_task` parses the command, builds a `POSITION_APP` protobuf payload, encrypts it with the configured AES-128-CTR key, and queues it for `lora_tx_task` to broadcast immediately.
 
 ## Bluetooth SPP
 
@@ -206,9 +231,10 @@ main/
 ├── analyzer/
 │   ├── events.h              shared event types, queue/semaphore handles
 │   ├── rx_task.c             DIO0 → FIFO read → decode → event queue
-│   ├── tx_task.c             60 s NodeInfo broadcast
+│   ├── tx_task.c             NodeInfo broadcast + on-demand TX queue
 │   ├── noise_task.c          32-sample noise floor averaging
-│   └── logger_task.c         NDJSON serialiser → UART + Bluetooth SPP
+│   ├── logger_task.c         NDJSON serialiser → UART + Bluetooth SPP
+│   └── cmd_task.c            UART JSON command reader (send_position)
 ├── display/
 │   └── oled.h/.c             SSD1306 minimal I2C driver + 5×7 font
 └── bt/
@@ -223,10 +249,11 @@ web/
 |---|---|---|---|
 | `lora_irq` | 2048 | 5 | Processes DIO0 interrupt, routes to RX/TX handlers |
 | `lora_rx` | 4096 | 4 | Reads FIFO, decrypts, decodes, posts event |
-| `lora_tx` | 4096 | 3 | 60 s NodeInfo TX |
+| `lora_tx` | 4096 | 3 | 60 s NodeInfo TX + on-demand TX from queue |
 | `noise` | 2048 | 2 | 5 s noise floor sampling |
 | `logger` | 4096 | 1 | NDJSON serialiser to UART and Bluetooth SPP |
 | `display` | 2048 | 1 | 1 Hz OLED update |
+| `cmd` | 4096 | 1 | UART JSON command reader; queues on-demand TX |
 
 ## Cryptography Notes
 

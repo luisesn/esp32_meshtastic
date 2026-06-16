@@ -65,6 +65,9 @@ typedef struct {
     float    barometric_pressure;/* hPa */
 } mesh_telemetry_t;
 
+/* Encode a Position message into buf, return number of bytes written (0 on error) */
+size_t proto_encode_position(const mesh_position_t *pos, uint8_t *buf, size_t buf_size);
+
 bool proto_decode_position(const uint8_t *buf, size_t len, mesh_position_t *out);
 bool proto_decode_routing(const uint8_t *buf, size_t len, mesh_routing_t *out);
 bool proto_decode_telemetry(const uint8_t *buf, size_t len, mesh_telemetry_t *out);
